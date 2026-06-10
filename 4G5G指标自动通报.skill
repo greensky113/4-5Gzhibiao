@@ -1,0 +1,191 @@
+---
+name: 4G5G指标自动通报
+description: 全自动处理4G/5G无线网络指标数据，生成汇总表、计算结果表和可视化看板。一句话调用，全程自动化执行，固化逻辑不可修改。
+---
+
+# 4G/5G指标自动通报
+
+## 技能说明
+
+- **调用方式**：一句话调用，如"执行4G5G指标自动通报"
+- **执行模式**：全自动执行，无需任何人工干预
+- **逻辑固化**：所有目录、流程、格式已锁死，不可随意修改
+
+---
+
+## 固定目录配置（锁死）
+
+| 用途 | 路径（固定） |
+|------|-------------|
+| 4G原始数据目录 | `C:\zhibiao\4G_source` |
+| 5G原始数据目录 | `C:\zhibiao\5G_source` |
+| 4G结果输出目录 | `C:\zhibiao\4G_output` |
+| 5G结果输出目录 | `C:\zhibiao\5G_output` |
+| 最终图片结果输出目录 | `C:\zhibiao\pic_result` |
+
+---
+
+## 全流程执行步骤
+
+### 步骤1：读取源数据
+
+**关键：必须过滤临时文件**
+```python
+files = [f for f in os.listdir(source_dir) if f.endswith(".xlsx") and not f.startswith("~$")]
+```
+
+### 步骤2：数据清洗与合并
+
+1. 读取每个Excel文件的各个Sheet
+2. 清理列名（去除前后空格）
+3. 按位置合并（第一个文件的列名作为标准）
+
+### 步骤3：生成汇总表
+
+输出Excel包含多个Sheet：
+- `汇总表` - 所有数据汇总
+- `{小区组名}` - 各小区组明细
+
+### 步骤4：规则计算
+
+**关键计算规则：**
+- **最大用户数、流量**：按「时间 + 小区组」求和
+- **单小区最大用户数、单小区流量**：从各小区组Sheet取对应时间点的最大值（其他时间点为0）
+- 输出覆盖所有时间点（0:00-8:00共9个时间点）
+
+```python
+# 最大用户数、流量：按时间+小区组求和
+total_max_user = time_data[max_user_col].sum()
+total_flow = time_data[flow_col].sum()
+
+# 单小区最大用户数、单小区流量：从各小区组Sheet取该时间点最大值
+single_max_user = time_single[single_max_col].max()  # 无数据则为0
+single_flow = time_single[single_flow_col].max()     # 无数据则为0
+```
+
+### 步骤4.1：指标情况计算（重要！）
+
+**指标数据来源于各小区组Sheet（不是汇总表）**
+
+| 判定类型 | 条件 | 阈值 | 字段 | 数据来源 |
+|----------|------|------|------|----------|
+| 高负荷小区 | 上行PRB利用率≥70% 或 下行PRB利用率≥70% | ≥70% | 上行PRB利用率-%、下行PRB利用率-% | 各小区组Sheet |
+| 低接通小区 | 无线接通率 < 95% | <95% | RRC连接建立成功率_邻区干扰-H(%) | 各小区组Sheet |
+| 高掉线小区 | 无线掉线率 > 5% | >5% | 上行掉线率(%) | 各小区组Sheet |
+| 低切换小区 | 切换成功率 < 90% | <90% | 切换成功率-D | 各小区组Sheet |
+| 性能劣化小区数 | = 低接通 + 高掉线 + 低切换 | 去重 | 按「小区名称」或「基站名称」去重 | 各小区组Sheet |
+| 未建立的小区 | 暂无 | 0 | 暂无 | 暂无 |
+
+```python
+# 指标计算伪代码（从各小区组Sheet读取）
+ul_prb_col = find_column(time_sheet_data, ["上行PRB利用率", "上行PRB"])
+dl_prb_col = find_column(time_sheet_data, ["下行PRB利用率", "下行PRB"])
+
+# 高负荷小区：上行PRB利用率≥70% 或 下行PRB利用率≥70%
+if ul_prb_col:
+    high_load += (pd.to_numeric(time_sheet_data[ul_prb_col], errors='coerce') >= 70).sum()
+if dl_prb_col:
+    high_load += (pd.to_numeric(time_sheet_data[dl_prb_col], errors='coerce') >= 70).sum()
+
+# 低接通小区：RRC连接建立成功率_邻区干扰-H(%) < 95%
+rrc_success_col = find_column(time_sheet_data, ["RRC连接建立成功率_邻区干扰", "RRC连接建立成功率"])
+
+# 高掉线小区：上行掉线率(%) > 5%
+ul_drop_col = find_column(time_sheet_data, ["上行掉线率", "掉线率"])
+
+# 低切换小区：切换成功率-D < 90%
+handover_col = find_column(time_sheet_data, ["切换成功率-D", "切换成功率"])
+
+# 性能劣化小区数 = 低接通 + 高掉线 + 低切换（按小区名称/基站名称去重）
+perf_set = set()
+cell_name_col = find_column(time_sheet_data, ["小区名称", "基站名称"])
+```
+
+**注意**：
+1. 指标字段在**各小区组Sheet**中，不在汇总表
+2. 需要按时间点匹配各小区组Sheet的数据
+3. 性能劣化小区数需要按「小区名称」或「基站名称」去重
+
+### 步骤5：可视化看板生成
+
+**图表格式：**
+- 横轴标签：`00:00`、`01:00`...`08:00` 格式
+- 左侧Y轴：最大用户数（蓝色）
+- 右侧Y轴：流量(GB)（红色）
+- 数据标签：上下交错避免重叠（奇偶位交替）
+
+**标题格式（锁死）：**
+- 4G: `[小区组名]（4G）`
+- 5G: `[小区组名]（5G）`
+
+**正文格式（锁死）：**
+```
+YYYY-MM-DD HH:MM-HH:MM指标通报
+1.用户数和流量
+4G/5G：最大用户数X个，流量X.XXGB
+单小区最大用户数X，单小区最大流量X.XXGB
+2.指标情况：高负荷小区X个，性能劣化X个
+3.未建立的小区数量X个
+4.处理情况：已处理高负荷小区X个，性能劣化X个
+5.是否需要现场支撑：扩容加板X个，故障处理X个
+```
+
+**配色方案（锁死）：**
+- 中国移动蓝: `#00A0E9`
+- 中国移动红: `#E60012`
+- 白色: `#FFFFFF`
+- 深蓝（标题）: `#0066B8`
+
+---
+
+## 输出文件命名规范（锁死）
+
+| 文件类型 | 命名格式 |
+|----------|----------|
+| 总表 | `4G总表_YYYYMMDD_HHMMSS.xlsx` / `5G总表_YYYYMMDD_HHMMSS.xlsx` |
+| 计算结果 | `4G指标通报计算结果_YYYYMMDD_HHMMSS.xlsx` / `5G指标通报计算结果_YYYYMMDD_HHMMSS.xlsx` |
+| 看板 | `{小区组名}指标通报计算结果_YYYYMMDD_HHMMSS.PNG` |
+
+---
+
+## 执行命令
+
+```bash
+cd C:\Users\Admin\Documents\MobileClaw\p_mc-0bgw1z5el9bls
+uv run --with pandas --with matplotlib --with pillow --with openpyxl python full_process.py
+```
+
+注意：执行前需确保目录下存在 full_process.py 脚本文件。
+
+---
+
+## 核心脚本
+
+执行入口文件：`full_process.py`
+
+该脚本已完整实现上述所有流程，包含：
+- 临时文件过滤
+- 数据清洗与合并
+- 汇总表生成
+- 规则计算（包含指标情况计算）
+- 可视化看板生成
+
+---
+
+## 重要约束
+
+1. ❌ 不可修改固定目录配置
+2. ❌ 不可修改标题格式
+3. ❌ 不可修改正文格式
+4. ❌ 不可修改配色方案
+5. ❌ 不可修改文件命名规范
+6. ✅ 如需调整格式，请先更新Skill描述文件，再执行
+
+---
+
+## 离线安装说明
+
+1. 创建目标工作目录（如：`C:\Users\Admin\Documents\MobileClaw\p_mc-xxx`）
+2. 将 `full_process.py` 脚本复制到目标目录
+3. 在MobileClaw中创建新Skill，导入本SKILL.md文件
+4. 配置固定目录后即可使用
