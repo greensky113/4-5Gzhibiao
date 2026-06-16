@@ -49,14 +49,15 @@ files = [f for f in os.listdir(source_dir) if f.endswith(".xlsx") and not f.star
 ### 步骤4：规则计算
 
 **关键计算规则：**
-- **最大用户数、流量**：按「时间 + 小区组」求和
+- **最大用户数、流量、语音话务量**：按「时间 + 小区组」求和
 - **单小区最大用户数、单小区流量**：从各小区组Sheet取对应时间点的最大值（其他时间点为0）
 - 输出覆盖所有时间点（0:00-8:00共9个时间点）
 
 ```python
-# 最大用户数、流量：按时间+小区组求和
+# 最大用户数、流量、语音话务量：按时间+小区组求和
 total_max_user = time_data[max_user_col].sum()
 total_flow = time_data[flow_col].sum()
+total_voice = time_data[voice_col].sum()  # 4G: VoLTE用户数, 5G: VoNR用户数
 
 # 单小区最大用户数、单小区流量：从各小区组Sheet取该时间点最大值
 single_max_user = time_single[single_max_col].max()  # 无数据则为0
@@ -74,7 +75,7 @@ single_flow = time_single[single_flow_col].max()     # 无数据则为0
 | 高掉线小区 | 无线掉线率 > 5% | >5% | 上行掉线率(%) | 各小区组Sheet |
 | 低切换小区 | 切换成功率 < 90% | <90% | 切换成功率-D | 各小区组Sheet |
 | 性能劣化小区数 | = 低接通 + 高掉线 + 低切换 | 去重 | 按「小区名称」或「基站名称」去重 | 各小区组Sheet |
-| 未建立的小区 | 暂无 | 0 | 暂无 | 暂无 |
+| 未建立的小区 | 所有关键字段为0或无有效数据 | 计数 | 检查小区内最大用户数、总流量、PRB利用率等关键字段 | 各小区组Sheet |
 
 ```python
 # 指标计算伪代码（从各小区组Sheet读取）
@@ -168,7 +169,18 @@ uv run --with pandas --with matplotlib --with pillow --with openpyxl python full
 - 数据清洗与合并
 - 汇总表生成
 - 规则计算（包含指标情况计算）
-- 可视化看板生成
+- 语音话务量计算（4G: VoLTE用户数，5G: VoNR用户数，按时间+小区组求和）
+- 未建立的小区统计（关键字段全为0或无有效数据的小区）
+- 各小区组可视化看板生成
+- 汇总通报看板生成（所有小区组数据按时间汇总）
+
+### 输出文件新增字段
+
+| 字段名 | 说明 |
+|--------|------|
+| 语音话务量 | 4G: VoLTE语音通话话务量-HH, 5G: VoNR用户数-KM，按时间+小区组求和 |
+| 未建立的小区 | 检查关键字段(最大用户数、总流量、PRB利用率)全为0的小区数量 |
+| 汇总通报 | 文件名：`汇总指标通报计算结果_YYYYMMDD_HHMMSS.PNG` |
 
 ---
 

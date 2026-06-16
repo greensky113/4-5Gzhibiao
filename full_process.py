@@ -131,6 +131,8 @@ def process_network_type(source_dir, output_dir, network_type):
     group_col = find_column(summary_df, ["LTE小区", "NR小区", "小区"])
     max_user_col = find_column(summary_df, ["最大用户数", "用户数"])
     flow_col = find_column(summary_df, ["总流量", "流量"])
+    # 语音话务量列（4G: VoLTE用户数，5G: VoNR用户数）
+    voice_col = find_column(summary_df, ["VoLTE用户数", "VoNR用户数"])
 
     # 从各小区组Sheet读取指标计算所需的字段
     # 指标字段在各小区组Sheet中，不在汇总表
@@ -189,9 +191,10 @@ def process_network_type(source_dir, output_dir, network_type):
                     continue
                 time_data = group_data[group_data[time_col] == time_val]
 
-                # 最大用户数、流量：按时间+小区组求和
+                # 最大用户数、流量、语音话务量：按时间+小区组求和
                 total_max_user = time_data[max_user_col].sum() if max_user_col else 0
                 total_flow = time_data[flow_col].sum() if flow_col else 0
+                total_voice = time_data[voice_col].sum() if voice_col else 0
 
                 # 单小区最大用户数、单小区流量：从各小区组Sheet取该时间点的最大值
                 single_max_user = 0
@@ -333,12 +336,60 @@ def process_network_type(source_dir, output_dir, network_type):
                                     perf_set.add(cell_id)
                         perf = len(perf_set)
 
+                        # 未建立的小区：所有字段数据都为0或无有效数据的小区数量
+                        # 需要检查关键字段：最大用户数、流量、PRB利用率等
+                        no_build = 0
+                        key_cols_to_check = []
+                        if find_column(
+                            time_sheet_data,
+                            ["小区内的最大用户数", "小区内最大用户数", "最大用户数"],
+                        ):
+                            key_cols_to_check.append(
+                                find_column(
+                                    time_sheet_data,
+                                    [
+                                        "小区内的最大用户数",
+                                        "小区内最大用户数",
+                                        "最大用户数",
+                                    ],
+                                )
+                            )
+                        if find_column(time_sheet_data, ["总流量", "流量"]):
+                            key_cols_to_check.append(
+                                find_column(time_sheet_data, ["总流量", "流量"])
+                            )
+                        if find_column(time_sheet_data, ["上行PRB利用率", "上行PRB"]):
+                            key_cols_to_check.append(
+                                find_column(
+                                    time_sheet_data, ["上行PRB利用率", "上行PRB"]
+                                )
+                            )
+                        if find_column(time_sheet_data, ["下行PRB利用率", "下行PRB"]):
+                            key_cols_to_check.append(
+                                find_column(
+                                    time_sheet_data, ["下行PRB利用率", "下行PRB"]
+                                )
+                            )
+
+                        if key_cols_to_check:
+                            for idx, row in time_sheet_data.iterrows():
+                                all_zero = True
+                                for col in key_cols_to_check:
+                                    if col and col in row:
+                                        val = pd.to_numeric(row[col], errors="coerce")
+                                        if pd.notna(val) and val != 0:
+                                            all_zero = False
+                                            break
+                                if all_zero:
+                                    no_build += 1
+
                 result_dfs.append(
                     {
                         "时间": time_val,
                         "小区组": group_name,
                         "最大用户数": total_max_user,
                         "流量": total_flow,
+                        "语音话务量": total_voice,
                         "单小区最大用户数": single_max_user,
                         "单小区流量": single_flow,
                         "高负荷小区数": high_load,
@@ -552,7 +603,7 @@ def generate_board(result_4g_df, result_5g_df):
 
         text_4g = f"""{body_4g}
 1.用户数和流量
-4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB
+4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB，语音话务量{int(latest_4g["语音话务量"])}个
 单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
@@ -561,7 +612,7 @@ def generate_board(result_4g_df, result_5g_df):
 
         text_5g = f"""{body_5g}
 1.用户数和流量
-5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB
+5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB，语音话务量{int(latest_5g["语音话务量"])}个
 单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
@@ -592,6 +643,119 @@ def generate_board(result_4g_df, result_5g_df):
         )
 
 
+def generate_summary_board(result_4g_df, result_5g_df):
+    """
+    生成汇总通报 - 按时间统计所有小区组的数据
+    """
+    print(f"\n步骤8: 生成汇总通报看板")
+
+    # 使用默认处理信息（0）
+    default_info = {
+        "已处理高负荷": 0,
+        "已处理性能劣化": 0,
+        "扩容加板": 0,
+        "故障处理": 0,
+    }
+
+    # 按时间汇总4G和5G数据
+    # 最大用户数、流量、语音话务量：所有小区组按时间求和
+    summary_4g = (
+        result_4g_df.groupby("时间")
+        .agg(
+            {
+                "最大用户数": "sum",
+                "流量": "sum",
+                "语音话务量": "sum",
+                "单小区最大用户数": "max",
+                "单小区流量": "max",
+                "高负荷小区数": "sum",
+                "性能劣化小区数": "sum",
+                "未建立的小区": "sum",
+            }
+        )
+        .reset_index()
+    )
+    summary_4g["小区组"] = "汇总"
+
+    summary_5g = (
+        result_5g_df.groupby("时间")
+        .agg(
+            {
+                "最大用户数": "sum",
+                "流量": "sum",
+                "语音话务量": "sum",
+                "单小区最大用户数": "max",
+                "单小区流量": "max",
+                "高负荷小区数": "sum",
+                "性能劣化小区数": "sum",
+                "未建立的小区": "sum",
+            }
+        )
+        .reset_index()
+    )
+    summary_5g["小区组"] = "汇总"
+
+    print(f"\n处理: 汇总")
+
+    chart_4g = os.path.join(OUTPUT_4G, f"4G_汇总_chart.png")
+    chart_5g = os.path.join(OUTPUT_5G, f"5G_汇总_chart.png")
+
+    create_chart(summary_4g, f"指标通报（4G）- 汇总", chart_4g)
+    create_chart(summary_5g, f"指标通报（5G）- 汇总", chart_5g)
+
+    latest_4g = summary_4g.iloc[-1]
+    latest_5g = summary_5g.iloc[-1]
+
+    time_min = summary_4g["时间"].min()
+    time_max = summary_4g["时间"].max()
+    date_str = str(time_min).split(" ")[0]
+    time_str = f"{str(time_min).split(' ')[1][:5]}-{str(time_max).split(' ')[1][:5]}"
+
+    expand_count = default_info["扩容加板"]
+    fault_count = default_info["故障处理"]
+
+    title_4g = "[汇总]（4G）"
+    title_5g = "[汇总]（5G）"
+    body_4g = f"{date_str} {time_str}指标通报"
+    body_5g = f"{date_str} {time_str}指标通报"
+
+    text_4g = f"""{body_4g}
+1.用户数和流量
+4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB，语音话务量{int(latest_4g["语音话务量"])}个
+单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
+2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
+3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
+4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{expand_count}个，故障处理{fault_count}个"""
+
+    text_5g = f"""{body_5g}
+1.用户数和流量
+5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB，语音话务量{int(latest_5g["语音话务量"])}个
+单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
+2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
+3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
+4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{default_info["扩容加板"]}个，故障处理{default_info["故障处理"]}个"""
+
+    board_file = os.path.join(PIC_OUTPUT, f"汇总指标通报计算结果_{current_time}.PNG")
+    create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, board_file)
+
+    print(f"  已生成: {board_file}")
+
+    if os.path.exists(chart_4g):
+        os.remove(chart_4g)
+    if os.path.exists(chart_5g):
+        os.remove(chart_5g)
+
+    print(f"\n  【汇总】处理情况：")
+    print(
+        f"  4G指标情况：高负荷小区{int(latest_4g['高负荷小区数'])}个，性能劣化{int(latest_4g['性能劣化小区数'])}个"
+    )
+    print(
+        f"  5G指标情况：高负荷小区{int(latest_5g['高负荷小区数'])}个，性能劣化{int(latest_5g['性能劣化小区数'])}个"
+    )
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("4G/5G指标自动通报")
@@ -600,7 +764,11 @@ if __name__ == "__main__":
     result_4g_df, _ = process_network_type(SOURCE_4G, OUTPUT_4G, "4G")
     result_5g_df, _ = process_network_type(SOURCE_5G, OUTPUT_5G, "5G")
 
+    # 生成各小区组看板
     generate_board(result_4g_df, result_5g_df)
+
+    # 生成汇总通报看板
+    generate_summary_board(result_4g_df, result_5g_df)
 
     print("\n" + "=" * 60)
     print("全部流程执行完成！")
