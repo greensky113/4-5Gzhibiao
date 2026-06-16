@@ -131,8 +131,17 @@ def process_network_type(source_dir, output_dir, network_type):
     group_col = find_column(summary_df, ["LTE小区", "NR小区", "小区"])
     max_user_col = find_column(summary_df, ["最大用户数", "用户数"])
     flow_col = find_column(summary_df, ["总流量", "流量"])
-    # 语音话务量列（4G: VoLTE用户数，5G: VoNR用户数）
-    voice_col = find_column(summary_df, ["VoLTE用户数", "VoNR用户数"])
+    # 语音话务量列（4G: VoLTE语音通话话务量，5G: VoNR用户数）
+    voice_col = find_column(
+        summary_df,
+        [
+            "VoLTE语音通话话务量",
+            "VoLTE语音话务量",
+            "VoLTE用户数",
+            "VoNR用户数",
+            "VoNR话务量",
+        ],
+    )
 
     # 从各小区组Sheet读取指标计算所需的字段
     # 指标字段在各小区组Sheet中，不在汇总表
