@@ -945,6 +945,72 @@ def generate_text_summary(result_4g_df, result_5g_df):
     save_text_file(summary_text, "汇总")
 
 
+def merge_all_boards():
+    """
+    将所有小区组看板和汇总看板合并成一张大图（上下分布）
+    """
+    print(f"\n步骤10: 合并所有看板为一张图")
+
+    # 获取所有小区组
+    cell_groups_set = set()
+    for f in os.listdir(OUTPUT_4G):
+        if f.startswith("4G指标通报计算结果_"):
+            cell_groups_set.add(
+                f.replace("4G指标通报计算结果_", "").replace(".xlsx", "")
+            )
+
+    cell_groups = list(cell_groups_set)
+    if not cell_groups:
+        print("  无小区组数据，跳过合并")
+        return
+
+    # 构建需要合并的图片列表（按顺序：各小区组 + 汇总）
+    board_files = []
+
+    for group in cell_groups:
+        board_file = os.path.join(
+            PIC_OUTPUT, f"{group}指标通报计算结果_{current_time}.PNG"
+        )
+        if os.path.exists(board_file):
+            board_files.append((group, board_file))
+
+    # 添加汇总看板
+    summary_file = os.path.join(PIC_OUTPUT, f"汇总指标通报计算结果_{current_time}.PNG")
+    if os.path.exists(summary_file):
+        board_files.append(("汇总", summary_file))
+
+    if len(board_files) < 2:
+        print("  图片数量不足，无法合并")
+        return
+
+    # 读取所有图片
+    images = []
+    for group_name, img_path in board_files:
+        img = Image.open(img_path).convert("RGB")
+        images.append(img)
+        print(f"  已加载: {group_name}, 尺寸: {img.size}")
+
+    # 计算合并后的尺寸
+    max_width = max(img.width for img in images)
+    total_height = sum(img.height for img in images)
+
+    print(f"  合并后尺寸: {max_width} x {total_height}")
+
+    # 创建新图片
+    combined = Image.new("RGB", (max_width, total_height), "#FFFFFF")
+
+    # 从上到下粘贴图片
+    y_offset = 0
+    for img in images:
+        combined.paste(img, (0, y_offset))
+        y_offset += img.height
+
+    # 保存合并后的图片
+    output_file = os.path.join(PIC_OUTPUT, f"指标通报汇总图_{current_time}.PNG")
+    combined.save(output_file, "PNG", dpi=(300, 300))
+    print(f"  已生成: {output_file}")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("4G/5G指标自动通报")
@@ -961,6 +1027,9 @@ if __name__ == "__main__":
 
     # 生成文字版汇总通报
     generate_text_summary(result_4g_df, result_5g_df)
+
+    # 合并所有看板为一张图
+    merge_all_boards()
 
     print("\n" + "=" * 60)
     print("全部流程执行完成！")
