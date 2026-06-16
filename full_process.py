@@ -612,7 +612,7 @@ def generate_board(result_4g_df, result_5g_df):
 
         text_4g = f"""{body_4g}
 1.用户数和流量
-4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB，语音话务量{int(latest_4g["语音话务量"])}个
+4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB
 单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
@@ -621,7 +621,7 @@ def generate_board(result_4g_df, result_5g_df):
 
         text_5g = f"""{body_5g}
 1.用户数和流量
-5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB，语音话务量{int(latest_5g["语音话务量"])}个
+5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB
 单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
@@ -730,7 +730,7 @@ def generate_summary_board(result_4g_df, result_5g_df):
 
     text_4g = f"""{body_4g}
 1.用户数和流量
-4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB，语音话务量{int(latest_4g["语音话务量"])}个
+4G：最大用户数{int(latest_4g["最大用户数"])}个，流量{latest_4g["流量"]:.2f}GB
 单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
@@ -739,7 +739,7 @@ def generate_summary_board(result_4g_df, result_5g_df):
 
     text_5g = f"""{body_5g}
 1.用户数和流量
-5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB，语音话务量{int(latest_5g["语音话务量"])}个
+5G：最大用户数{int(latest_5g["最大用户数"])}个，流量{latest_5g["流量"]:.2f}GB
 单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
