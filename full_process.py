@@ -947,63 +947,95 @@ def generate_text_summary(result_4g_df, result_5g_df):
 
 def merge_all_boards():
     """
-    将所有小区组看板和汇总看板合并成一张大图（上下分布）
+    将所有小区组看板和汇总看板合并成一张大图
+    布局：左边4G列（所有小区组+汇总），右边5G列（所有小区组+汇总）
     """
-    print(f"\n步骤10: 合并所有看板为一张图")
+    print(f"\n步骤10: 合并所有看板为一张图（4G左列，5G右列）")
 
-    # 获取所有小区组
-    cell_groups_set = set()
-    for f in os.listdir(OUTPUT_4G):
-        if f.startswith("4G指标通报计算结果_"):
-            cell_groups_set.add(
-                f.replace("4G指标通报计算结果_", "").replace(".xlsx", "")
-            )
+    # 从4G和5G的计算结果Excel文件获取小区组列表
+    # 读取4G计算结果
+    result_4g_file = None
+    result_5g_file = None
 
-    cell_groups = list(cell_groups_set)
-    if not cell_groups:
-        print("  无小区组数据，跳过合并")
+    # 找到最新的计算结果文件
+    for f in sorted(os.listdir(OUTPUT_4G), reverse=True):
+        if f.startswith("4G指标通报计算结果_") and f.endswith(".xlsx"):
+            result_4g_file = os.path.join(OUTPUT_4G, f)
+            break
+
+    for f in sorted(os.listdir(OUTPUT_5G), reverse=True):
+        if f.startswith("5G指标通报计算结果_") and f.endswith(".xlsx"):
+            result_5g_file = os.path.join(OUTPUT_5G, f)
+            break
+
+    if not result_4g_file or not result_5g_file:
+        print("  未找到计算结果文件，跳过合并")
         return
 
-    # 构建需要合并的图片列表（按顺序：各小区组 + 汇总）
-    board_files = []
+    # 读取小区组列表
+    import pandas as pd
 
+    df_4g = pd.read_excel(result_4g_file)
+    cell_groups = list(df_4g["小区组"].unique())
+    print(f"  找到 {len(cell_groups)} 个小区组: {cell_groups}")
+
+    # 读取所有图片并拆分成4G和5G
+    all_4g_images = []
+    all_5g_images = []
+
+    # 读取各小区组图片（按顺序）
     for group in cell_groups:
+        if pd.isna(group):
+            continue
         board_file = os.path.join(
             PIC_OUTPUT, f"{group}指标通报计算结果_{current_time}.PNG"
         )
         if os.path.exists(board_file):
-            board_files.append((group, board_file))
+            img = Image.open(board_file).convert("RGB")
+            # 拆分成上下两半：上半是4G，下半是5G
+            half_height = img.height // 2
+            img_4g = img.crop((0, 0, img.width, half_height))
+            img_5g = img.crop((0, half_height, img.width, img.height))
+            all_4g_images.append((group, img_4g))
+            all_5g_images.append((group, img_5g))
+            print(f"  已拆分: {group}, 4G尺寸: {img_4g.size}, 5G尺寸: {img_5g.size}")
 
-    # 添加汇总看板
+    # 读取汇总图片
     summary_file = os.path.join(PIC_OUTPUT, f"汇总指标通报计算结果_{current_time}.PNG")
     if os.path.exists(summary_file):
-        board_files.append(("汇总", summary_file))
+        img = Image.open(summary_file).convert("RGB")
+        half_height = img.height // 2
+        img_4g = img.crop((0, 0, img.width, half_height))
+        img_5g = img.crop((0, half_height, img.width, img.height))
+        all_4g_images.append(("汇总", img_4g))
+        all_5g_images.append(("汇总", img_5g))
+        print(f"  已拆分: 汇总, 4G尺寸: {img_4g.size}, 5G尺寸: {img_5g.size}")
 
-    if len(board_files) < 2:
+    if len(all_4g_images) < 2:
         print("  图片数量不足，无法合并")
         return
 
-    # 读取所有图片
-    images = []
-    for group_name, img_path in board_files:
-        img = Image.open(img_path).convert("RGB")
-        images.append(img)
-        print(f"  已加载: {group_name}, 尺寸: {img.size}")
-
     # 计算合并后的尺寸
-    max_width = max(img.width for img in images)
-    total_height = sum(img.height for img in images)
+    # 取最大的宽度（需要容纳4G+5G两列）
+    max_single_width = max(img.width for _, img in all_4g_images)
+    total_width = max_single_width * 2
 
-    print(f"  合并后尺寸: {max_width} x {total_height}")
+    # 总高度 = 所有4G图片高度之和（或者5G，两者应该相同）
+    total_height = sum(img.height for _, img in all_4g_images)
+
+    print(f"  合并后尺寸: {total_width} x {total_height}")
 
     # 创建新图片
-    combined = Image.new("RGB", (max_width, total_height), "#FFFFFF")
+    combined = Image.new("RGB", (total_width, total_height), "#FFFFFF")
 
-    # 从上到下粘贴图片
+    # 左边粘贴所有4G图片，右边粘贴所有5G图片
     y_offset = 0
-    for img in images:
-        combined.paste(img, (0, y_offset))
-        y_offset += img.height
+    for i, ((name_4g, img_4g), (name_5g, img_5g)) in enumerate(
+        zip(all_4g_images, all_5g_images)
+    ):
+        combined.paste(img_4g, (0, y_offset))
+        combined.paste(img_5g, (max_single_width, y_offset))
+        y_offset += img_4g.height
 
     # 保存合并后的图片
     output_file = os.path.join(PIC_OUTPUT, f"指标通报汇总图_{current_time}.PNG")
