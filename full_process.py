@@ -765,6 +765,173 @@ def generate_summary_board(result_4g_df, result_5g_df):
     )
 
 
+def generate_text_summary(result_4g_df, result_5g_df):
+    """
+    生成文字版汇总通报，包含与上一时段的环比对比
+    """
+    print(f"\n步骤9: 生成文字版汇总通报")
+
+    # 获取所有小区组名称
+    cell_groups = result_4g_df["小区组"].unique()
+    if len(cell_groups) == 0:
+        print("  无小区组数据，跳过")
+        return
+
+    # 使用第一个小区组名称作为汇总通报的标题
+    cell_group_name = cell_groups[0]
+
+    # 按时间排序，获取最后两个时间点
+    result_4g_df = result_4g_df.sort_values("时间")
+    result_5g_df = result_5g_df.sort_values("时间")
+
+    times = sorted(result_4g_df["时间"].unique())
+    if len(times) < 2:
+        print("  数据不足一个时段，无法进行环比对比")
+        # 仍生成通报，但环比显示为"--"
+        current_time = times[-1] if times else None
+        prev_time = None
+    else:
+        current_time = times[-1]
+        prev_time = times[-2]
+
+    # 获取当前时段4G和5G的汇总数据
+    current_4g = result_4g_df[result_4g_df["时间"] == current_time]
+    current_5g = result_5g_df[result_5g_df["时间"] == current_time]
+
+    # 当前时段各项指标求和
+    current_4g_max_user = current_4g["最大用户数"].sum()
+    current_5g_max_user = current_5g["最大用户数"].sum()
+    current_4g_flow = current_4g["流量"].sum()
+    current_5g_flow = current_5g["流量"].sum()
+    current_4g_voice = current_4g["语音话务量"].sum()
+    current_5g_voice = current_5g["语音话务量"].sum()
+
+    current_total_max_user = current_4g_max_user + current_5g_max_user
+    current_total_flow = current_4g_flow + current_5g_flow
+    current_total_voice = current_4g_voice + current_5g_voice
+
+    # 计算环比函数
+    def calc_change(current, prev):
+        if prev == 0:
+            return None
+        return (current - prev) / prev * 100
+
+    # 格式化环比字符串
+    def format_change(change):
+        if change is None:
+            return "--"
+        elif change >= 0:
+            return f"增幅{abs(change):.2f}%"
+        else:
+            return f"降低{abs(change):.2f}%"
+
+    # 获取上一时段数据（如果存在）
+    change_total_user = change_total_flow = change_total_voice = None
+    change_5g_flow = change_4g_flow = None
+    change_5g_voice = change_4g_voice = None
+    change_5g_user = change_4g_user = None
+    has_prev = False
+
+    if prev_time:
+        prev_4g = result_4g_df[result_4g_df["时间"] == prev_time]
+        prev_5g = result_5g_df[result_5g_df["时间"] == prev_time]
+
+        prev_4g_max_user = prev_4g["最大用户数"].sum()
+        prev_5g_max_user = prev_5g["最大用户数"].sum()
+        prev_4g_flow = prev_4g["流量"].sum()
+        prev_5g_flow = prev_5g["流量"].sum()
+        prev_4g_voice = prev_4g["语音话务量"].sum()
+        prev_5g_voice = prev_5g["语音话务量"].sum()
+
+        prev_total_max_user = prev_4g_max_user + prev_5g_max_user
+        prev_total_flow = prev_4g_flow + prev_5g_flow
+        prev_total_voice = prev_4g_voice + prev_5g_voice
+
+        # 计算环比
+        change_total_user = calc_change(current_total_max_user, prev_total_max_user)
+        change_total_flow = calc_change(current_total_flow, prev_total_flow)
+        change_total_voice = calc_change(current_total_voice, prev_total_voice)
+        change_5g_flow = calc_change(current_5g_flow, prev_5g_flow)
+        change_4g_flow = calc_change(current_4g_flow, prev_4g_flow)
+        change_5g_voice = calc_change(current_5g_voice, prev_5g_voice)
+        change_4g_voice = calc_change(current_4g_voice, prev_4g_voice)
+        change_5g_user = calc_change(current_5g_max_user, prev_5g_max_user)
+        change_4g_user = calc_change(current_4g_max_user, prev_4g_max_user)
+
+        has_prev = True
+
+    # 格式化时间
+    def format_time_str(t):
+        if t is None:
+            return "--"
+        t_str = str(t)
+        if " " in t_str:
+            return t_str.replace(" ", " ")
+        return t_str
+
+    # 格式化用户数（转为万）
+    def format_user(num):
+        if num >= 10000:
+            return f"{num / 10000:.2f}万"
+        else:
+            return f"{num:.0f}"
+
+    # 格式化流量（转为TB）
+    def format_flow(num):
+        if num >= 1000:
+            return f"{num / 1000:.2f}TB"
+        else:
+            return f"{num:.2f}GB"
+
+    # 格式化话务量
+    def format_voice(num):
+        return f"{num:.2f}Erl"
+
+    # 拼装文字通报
+    current_time_str = format_time_str(current_time)
+    prev_time_str = format_time_str(prev_time)
+
+    # 生成时间段显示
+    if has_prev:
+        time_period = f"{current_time_str.split(' ')[0]} {current_time_str.split(' ')[1][:5]}-{current_time_str.split(' ')[1][-5:]}"
+    else:
+        time_period = f"{current_time_str}"
+
+    # 第一段：总体情况
+    if has_prev:
+        text = f"""【{cell_group_name}】
+{time_period} 4/5G网络性能指标通报：
+各项性能指标总体正常，无明显波动，4/5GRRC连接最大用户数{format_user(current_total_max_user)}，环比上时段{format_change(change_total_user)}，4/5G总流量{format_flow(current_total_flow)}，环比上时段{format_change(change_total_flow)}，语音总话务量{format_voice(current_total_voice)}，环比上时段{format_change(change_total_voice)}。其中：
+【流量】5G流量{format_flow(current_5g_flow)},环比上时段{format_change(change_5g_flow)}；4G流量{format_flow(current_4g_flow)}，环比上时段{format_change(change_4g_flow)}。
+【话务量】VoNR语音话务量{format_voice(current_5g_voice)}，环比上时段{format_change(change_5g_voice)}；VoLTE语音话务量{format_voice(current_4g_voice)}，环比上时段{format_change(change_4g_voice)}。
+【用户数】5GRRC连接最大用户数{format_user(current_5g_max_user)}，环比上时段{format_change(change_5g_user)}；4GRRC连接最大用户数{format_user(current_4g_max_user)}，环比上时段{format_change(change_4g_user)}。"""
+    else:
+        text = f"""【{cell_group_name}】
+{time_period} 4/5G网络性能指标通报：
+各项性能指标总体正常，4/5GRRC连接最大用户数{format_user(current_total_max_user)}，4/5G总流量{format_flow(current_total_flow)}，语音总话务量{format_voice(current_total_voice)}。其中：
+【流量】5G流量{format_flow(current_5g_flow)}；4G流量{format_flow(current_4g_flow)}。
+【话务量】VoNR语音话务量{format_voice(current_5g_voice)}；VoLTE语音话务量{format_voice(current_4g_voice)}。
+【用户数】5GRRC连接最大用户数{format_user(current_5g_max_user)}；4GRRC连接最大用户数{format_user(current_4g_max_user)}。
+（当前时段无上一时段数据，无法进行环比对比）"""
+
+    # 保存到文件，使用全局current_time变量生成文件名
+    import re
+
+    # 只处理文件名的非法字符，保留目录路径
+    filename = f"[汇总文字通报]_{current_time}.txt"
+    # 替换文件名中的非法字符
+    filename = re.sub(r"[\s:：]", "_", filename)
+    # 移除连续的下划线
+    filename = re.sub(r"_+", "_", filename)
+
+    text_file = os.path.join(PIC_OUTPUT, filename)
+    with open(text_file, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    print(f"  已生成: {text_file}")
+    return text_file
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("4G/5G指标自动通报")
@@ -778,6 +945,9 @@ if __name__ == "__main__":
 
     # 生成汇总通报看板
     generate_summary_board(result_4g_df, result_5g_df)
+
+    # 生成文字版汇总通报
+    generate_text_summary(result_4g_df, result_5g_df)
 
     print("\n" + "=" * 60)
     print("全部流程执行完成！")
