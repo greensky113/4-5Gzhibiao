@@ -893,9 +893,12 @@ def generate_text_summary(result_4g_df, result_5g_df):
 
     # 生成时间段显示
     if has_prev:
-        time_period = f"{current_time_str.split(' ')[0]} {current_time_str.split(' ')[1][:5]}-{current_time_str.split(' ')[1][-5:]}"
+        time_period = f"{prev_time_str.split(' ')[0]} {prev_time_str.split(' ')[1][:5]}-{current_time_str.split(' ')[1][-5:]}"
     else:
-        time_period = f"{current_time_str}"
+        # 没有上一时段，只显示当前时间点
+        time_period = (
+            f"{current_time_str.split(' ')[0]} {current_time_str.split(' ')[1][:5]}"
+        )
 
     # 第一段：总体情况
     if has_prev:
