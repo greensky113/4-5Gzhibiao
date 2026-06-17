@@ -21,6 +21,11 @@ OUTPUT_4G = r"C:\zhibiao\4G_output"
 OUTPUT_5G = r"C:\zhibiao\5G_output"
 PIC_OUTPUT = r"C:\zhibiao\pic_result"
 
+# 创建必要的输出目录
+for dir_path in [OUTPUT_4G, OUTPUT_5G, PIC_OUTPUT]:
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path, exist_ok=True)
+
 # 中国移动配色
 CMCC_BLUE = "#00A0E9"
 CMCC_RED = "#E60012"
@@ -29,6 +34,38 @@ CMCC_GRAY = "#F5F5F5"
 CMCC_DARK_BLUE = "#0066B8"
 
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def parse_answer_number(answer_str):
+    """解析用户回答中的数字"""
+    if not answer_str:
+        return 0
+    # 提取数字
+    import re
+
+    numbers = re.findall(r"\d+", str(answer_str))
+    if numbers:
+        return int(numbers[0])
+    # 处理"全部"等关键词
+    if "全部" in answer_str:
+        return 99  # 用99表示全部
+    return 0
+
+
+def parse_number_input(input_str):
+    """解析用户直接输入的数字"""
+    if not input_str or input_str.strip() == "":
+        return 0
+    try:
+        return int(input_str.strip())
+    except ValueError:
+        # 提取数字
+        import re
+
+        numbers = re.findall(r"\d+", str(input_str))
+        if numbers:
+            return int(numbers[0])
+        return 0
 
 
 def find_column(df, keywords):
@@ -617,10 +654,21 @@ def create_chart(df, title, output_file):
     plt.tight_layout()
     plt.savefig(output_file, dpi=100, bbox_inches="tight", facecolor=CMCC_WHITE)
     plt.close()
+
+    # 确认图表文件已成功保存
+    if not os.path.exists(output_file):
+        raise FileNotFoundError(f"图表保存失败: {output_file}")
+
     return output_file
 
 
 def create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, output_file):
+    # 检查图表文件是否存在
+    if not os.path.exists(chart_4g):
+        raise FileNotFoundError(f"4G图表文件不存在: {chart_4g}")
+    if not os.path.exists(chart_5g):
+        raise FileNotFoundError(f"5G图表文件不存在: {chart_5g}")
+
     img_4g = Image.open(chart_4g).convert("RGB")
     img_5g = Image.open(chart_5g).convert("RGB")
 
@@ -672,22 +720,99 @@ def create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, outpu
     return output_file
 
 
-def generate_board(result_4g_df, result_5g_df):
+def generate_board(result_4g_df, result_5g_df, user_process_info=None):
     """
-    生成看板 - 使用默认0值，等待用户补充后重新生成
+    生成看板 - 如果没有用户输入的处理信息则尝试询问每个小区组
     """
     print(f"\n步骤5-7: 生成可视化看板")
 
-    # 使用默认处理信息（0）
-    default_info = {
-        "已处理高负荷": 0,
-        "已处理性能劣化": 0,
-        "扩容加板": 0,
-        "故障处理": 0,
-    }
+    cell_groups = list(result_4g_df["小区组"].unique())
+    cell_groups = [g for g in cell_groups if pd.notna(g)]
 
-    cell_groups = result_4g_df["小区组"].unique()
+    # 如果没有用户提供的处理信息，则尝试询问用户
+    if user_process_info is None:
+        user_process_info = {}
 
+        print("\n" + "=" * 50)
+        print("需要收集各小区组的处理情况")
+        print("（如果不想输入，可以直接回车使用默认值0）")
+        print("=" * 50)
+
+        # 尝试获取用户输入
+        interactive_mode = True
+
+        # 先尝试汇总的处理情况
+        print("\n【汇总】处理情况：")
+        try:
+            processed_high_load = input("已处理高负荷小区数量（回车默认0）: ") or "0"
+            processed_perf = input("已处理性能劣化小区数量（回车默认0）: ") or "0"
+            expand_count = input("需要扩容加板的数量（回车默认0）: ") or "0"
+            fault_count = input("需要故障处理的数量（回车默认0）: ") or "0"
+
+            user_process_info["汇总"] = {
+                "已处理高负荷": parse_number_input(processed_high_load),
+                "已处理性能劣化": parse_number_input(processed_perf),
+                "扩容加板": parse_number_input(expand_count),
+                "故障处理": parse_number_input(fault_count),
+            }
+        except EOFError:
+            interactive_mode = False
+
+        # 逐个询问每个小区组
+        for cell_group in cell_groups:
+            if pd.isna(cell_group):
+                continue
+
+            print(f"\n【{cell_group}】处理情况：")
+
+            # 获取该小区组的指标情况
+            df_4g_group = result_4g_df[result_4g_df["小区组"] == cell_group]
+            df_5g_group = result_5g_df[result_5g_df["小区组"] == cell_group]
+
+            if df_4g_group.empty:
+                continue
+
+            latest_4g = df_4g_group.iloc[-1]
+            latest_5g = df_5g_group.iloc[-1] if not df_5g_group.empty else None
+
+            print(
+                f"  4G指标情况：高负荷小区{int(latest_4g['高负荷小区数'])}个，性能劣化{int(latest_4g['性能劣化小区数'])}个"
+            )
+            if latest_5g is not None:
+                print(
+                    f"  5G指标情况：高负荷小区{int(latest_5g['高负荷小区数'])}个，性能劣化{int(latest_5g['性能劣化小区数'])}个"
+                )
+
+            if interactive_mode:
+                try:
+                    processed_high_load = input("已处理高负荷（回车默认0）: ") or "0"
+                    processed_perf = input("已处理性能劣化（回车默认0）: ") or "0"
+                    expand_count = input("需要扩容加板（回车默认0）: ") or "0"
+                    fault_count = input("需要故障处理（回车默认0）: ") or "0"
+
+                    user_process_info[cell_group] = {
+                        "已处理高负荷": parse_number_input(processed_high_load),
+                        "已处理性能劣化": parse_number_input(processed_perf),
+                        "扩容加板": parse_number_input(expand_count),
+                        "故障处理": parse_number_input(fault_count),
+                    }
+                except EOFError:
+                    interactive_mode = False
+
+            if not interactive_mode:
+                # 非交互环境，使用默认值
+                user_process_info[cell_group] = {
+                    "已处理高负荷": 0,
+                    "已处理性能劣化": 0,
+                    "扩容加板": 0,
+                    "故障处理": 0,
+                }
+
+        if not interactive_mode:
+            print("\n（非交互环境，使用默认值0）")
+        print("\n开始生成看板...")
+
+    # 遍历各小区组生成看板
     for cell_group in cell_groups:
         if pd.isna(cell_group):
             continue
@@ -699,6 +824,46 @@ def generate_board(result_4g_df, result_5g_df):
         if df_4g_group.empty or df_5g_group.empty:
             print(f"  数据为空，跳过")
             continue
+
+        # 使用用户输入的信息
+        info = user_process_info.get(
+            cell_group,
+            {
+                "4G": {
+                    "已处理高负荷": 0,
+                    "已处理性能劣化": 0,
+                    "扩容加板": 0,
+                    "故障处理": 0,
+                },
+                "5G": {
+                    "已处理高负荷": 0,
+                    "已处理性能劣化": 0,
+                    "扩容加板": 0,
+                    "故障处理": 0,
+                },
+            },
+        )
+
+        # 兼容旧格式：如果info是简单字典（非嵌套），转换为新格式
+        if "4G" not in info and "5G" not in info:
+            # 旧格式，默认都是4G
+            info_4g = info
+            info_5g = {
+                "已处理高负荷": 0,
+                "已处理性能劣化": 0,
+                "扩容加板": 0,
+                "故障处理": 0,
+            }
+        else:
+            # 新格式，4G和5G分开
+            info_4g = info.get(
+                "4G",
+                {"已处理高负荷": 0, "已处理性能劣化": 0, "扩容加板": 0, "故障处理": 0},
+            )
+            info_5g = info.get(
+                "5G",
+                {"已处理高负荷": 0, "已处理性能劣化": 0, "扩容加板": 0, "故障处理": 0},
+            )
 
         chart_4g = os.path.join(OUTPUT_4G, f"4G_{cell_group}_chart.png")
         chart_5g = os.path.join(OUTPUT_5G, f"5G_{cell_group}_chart.png")
@@ -716,8 +881,10 @@ def generate_board(result_4g_df, result_5g_df):
             f"{str(time_min).split(' ')[1][:5]}-{str(time_max).split(' ')[1][:5]}"
         )
 
-        expand_count = default_info["扩容加板"]
-        fault_count = default_info["故障处理"]
+        expand_count_4g = info_4g["扩容加板"]
+        fault_count_4g = info_4g["故障处理"]
+        expand_count_5g = info_5g["扩容加板"]
+        fault_count_5g = info_5g["故障处理"]
 
         title_4g = f"[{cell_group}]（4G）"
         title_5g = f"[{cell_group}]（5G）"
@@ -730,8 +897,8 @@ def generate_board(result_4g_df, result_5g_df):
 单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
-4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
-5.是否需要现场支撑：扩容加板{expand_count}个，故障处理{fault_count}个"""
+4.处理情况：已处理高负荷小区{info_4g["已处理高负荷"]}个，性能劣化{info_4g["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{expand_count_4g}个，故障处理{fault_count_4g}个"""
 
         text_5g = f"""{body_5g}
 1.用户数和流量
@@ -739,8 +906,8 @@ def generate_board(result_4g_df, result_5g_df):
 单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
-4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
-5.是否需要现场支撑：扩容加板{default_info["扩容加板"]}个，故障处理{default_info["故障处理"]}个"""
+4.处理情况：已处理高负荷小区{info_5g["已处理高负荷"]}个，性能劣化{info_5g["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{expand_count_5g}个，故障处理{fault_count_5g}个"""
 
         board_file = os.path.join(
             PIC_OUTPUT, f"{cell_group}指标通报计算结果_{current_time}.PNG"
@@ -756,29 +923,74 @@ def generate_board(result_4g_df, result_5g_df):
         if os.path.exists(chart_5g):
             os.remove(chart_5g)
 
-        # 输出当前小区组的数据供用户确认处理情况
-        print(f"\n  【待确认】{cell_group} 处理情况：")
-        print(
-            f"  4G指标情况：高负荷小区{int(latest_4g['高负荷小区数'])}个，性能劣化{int(latest_4g['性能劣化小区数'])}个"
-        )
-        print(
-            f"  5G指标情况：高负荷小区{int(latest_5g['高负荷小区数'])}个，性能劣化{int(latest_5g['性能劣化小区数'])}个"
-        )
 
-
-def generate_summary_board(result_4g_df, result_5g_df):
+def generate_summary_board(result_4g_df, result_5g_df, user_process_info=None):
     """
     生成汇总通报 - 按时间统计所有小区组的数据
     """
     print(f"\n步骤8: 生成汇总通报看板")
 
-    # 使用默认处理信息（0）
-    default_info = {
-        "已处理高负荷": 0,
-        "已处理性能劣化": 0,
-        "扩容加板": 0,
-        "故障处理": 0,
-    }
+    # 计算所有小区组的处理情况总和（4G和5G分开）
+    if user_process_info:
+        total_info = {
+            "4G": {
+                "已处理高负荷": 0,
+                "已处理性能劣化": 0,
+                "扩容加板": 0,
+                "故障处理": 0,
+            },
+            "5G": {
+                "已处理高负荷": 0,
+                "已处理性能劣化": 0,
+                "扩容加板": 0,
+                "故障处理": 0,
+            },
+        }
+        for group_name, info in user_process_info.items():
+            if group_name != "汇总":  # 排除汇总本身
+                if isinstance(info, dict):
+                    # 新格式：info 包含 4G 和 5G 两个子字典
+                    if "4G" in info:
+                        total_info["4G"]["已处理高负荷"] += info["4G"].get(
+                            "已处理高负荷", 0
+                        )
+                        total_info["4G"]["已处理性能劣化"] += info["4G"].get(
+                            "已处理性能劣化", 0
+                        )
+                        total_info["4G"]["扩容加板"] += info["4G"].get("扩容加板", 0)
+                        total_info["4G"]["故障处理"] += info["4G"].get("故障处理", 0)
+                    if "5G" in info:
+                        total_info["5G"]["已处理高负荷"] += info["5G"].get(
+                            "已处理高负荷", 0
+                        )
+                        total_info["5G"]["已处理性能劣化"] += info["5G"].get(
+                            "已处理性能劣化", 0
+                        )
+                        total_info["5G"]["扩容加板"] += info["5G"].get("扩容加板", 0)
+                        total_info["5G"]["故障处理"] += info["5G"].get("故障处理", 0)
+                    # 兼容旧格式：info 直接包含处理情况（默认都是4G）
+                    else:
+                        total_info["4G"]["已处理高负荷"] += info.get("已处理高负荷", 0)
+                        total_info["4G"]["已处理性能劣化"] += info.get(
+                            "已处理性能劣化", 0
+                        )
+                        total_info["4G"]["扩容加板"] += info.get("扩容加板", 0)
+                        total_info["4G"]["故障处理"] += info.get("故障处理", 0)
+    else:
+        total_info = {
+            "4G": {
+                "已处理高负荷": 0,
+                "已处理性能劣化": 0,
+                "扩容加板": 0,
+                "故障处理": 0,
+            },
+            "5G": {
+                "已处理高负荷": 0,
+                "已处理性能劣化": 0,
+                "扩容加板": 0,
+                "故障处理": 0,
+            },
+        }
 
     # 按时间汇总4G和5G数据
     # 最大用户数、流量、语音话务量：所有小区组按时间求和
@@ -834,8 +1046,11 @@ def generate_summary_board(result_4g_df, result_5g_df):
     date_str = str(time_min).split(" ")[0]
     time_str = f"{str(time_min).split(' ')[1][:5]}-{str(time_max).split(' ')[1][:5]}"
 
-    expand_count = default_info["扩容加板"]
-    fault_count = default_info["故障处理"]
+    # 分别获取4G和5G的处理情况
+    expand_count_4g = total_info["4G"]["扩容加板"]
+    fault_count_4g = total_info["4G"]["故障处理"]
+    expand_count_5g = total_info["5G"]["扩容加板"]
+    fault_count_5g = total_info["5G"]["故障处理"]
 
     title_4g = "[汇总]（4G）"
     title_5g = "[汇总]（5G）"
@@ -848,8 +1063,8 @@ def generate_summary_board(result_4g_df, result_5g_df):
 单小区最大用户数{int(latest_4g["单小区最大用户数"])}，单小区最大流量{latest_4g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_4g["高负荷小区数"])}个，性能劣化{int(latest_4g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_4g["未建立的小区"])}个
-4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
-5.是否需要现场支撑：扩容加板{expand_count}个，故障处理{fault_count}个"""
+4.处理情况：已处理高负荷小区{total_info["4G"]["已处理高负荷"]}个，性能劣化{total_info["4G"]["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{expand_count_4g}个，故障处理{fault_count_4g}个"""
 
     text_5g = f"""{body_5g}
 1.用户数和流量
@@ -857,8 +1072,8 @@ def generate_summary_board(result_4g_df, result_5g_df):
 单小区最大用户数{int(latest_5g["单小区最大用户数"])}，单小区最大流量{latest_5g["单小区流量"]:.2f}GB
 2.指标情况：高负荷小区{int(latest_5g["高负荷小区数"])}个，性能劣化{int(latest_5g["性能劣化小区数"])}个
 3.未建立的小区数量{int(latest_5g["未建立的小区"])}个
-4.处理情况：已处理高负荷小区{default_info["已处理高负荷"]}个，性能劣化{default_info["已处理性能劣化"]}个
-5.是否需要现场支撑：扩容加板{default_info["扩容加板"]}个，故障处理{default_info["故障处理"]}个"""
+4.处理情况：已处理高负荷小区{total_info["5G"]["已处理高负荷"]}个，性能劣化{total_info["5G"]["已处理性能劣化"]}个
+5.是否需要现场支撑：扩容加板{expand_count_5g}个，故障处理{fault_count_5g}个"""
 
     board_file = os.path.join(PIC_OUTPUT, f"汇总指标通报计算结果_{current_time}.PNG")
     create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, board_file)
