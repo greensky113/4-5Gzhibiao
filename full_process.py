@@ -680,7 +680,8 @@ def create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, outpu
     img_5g = Image.open(chart_5g).convert("RGB")
 
     chart_w, chart_h = img_4g.size
-    text_w = 480
+    # 增大文字区域宽度，增加字号和行高
+    text_w = 600  # 从480增加到600
     text_h = chart_h
 
     text_4g_img = Image.new("RGB", (text_w, text_h), CMCC_WHITE)
@@ -689,22 +690,66 @@ def create_board(chart_4g, chart_5g, text_4g, text_5g, title_4g, title_5g, outpu
     draw_5g = ImageDraw.Draw(text_5g_img)
 
     font_path = "C:/Windows/Fonts/msyh.ttc"
-    title_font = ImageFont.truetype(font_path, 28)
-    text_font = ImageFont.truetype(font_path, 20)
+    title_font = ImageFont.truetype(font_path, 32)  # 从28增加到32
+    text_font = ImageFont.truetype(font_path, 24)  # 从20增加到24
+    line_height = 36  # 从30增加到36
 
     draw_4g.text((30, 25), title_4g, font=title_font, fill=CMCC_DARK_BLUE)
-    draw_4g.line([(30, 65), (text_w - 30, 65)], fill="#CCCCCC", width=1)
-    y = 80
+    draw_4g.line([(30, 70), (text_w - 30, 70)], fill="#CCCCCC", width=1)
+    y = 85
     for line in text_4g.split("\n"):
-        draw_4g.text((30, y), line, font=text_font, fill="#333333")
-        y += 30
+        # 限制每行字符数，自动换行
+        max_chars = 22  # 每行最多22个字符
+        if len(line) > max_chars:
+            # 按标点符号换行
+            import re
+
+            parts = re.split(r"([，。；])", line)
+            current_line = ""
+            for part in parts:
+                if len(current_line + part) <= max_chars:
+                    current_line += part
+                else:
+                    if current_line:
+                        draw_4g.text(
+                            (30, y), current_line, font=text_font, fill="#333333"
+                        )
+                        y += line_height
+                    current_line = part
+            if current_line:
+                draw_4g.text((30, y), current_line, font=text_font, fill="#333333")
+                y += line_height
+        else:
+            draw_4g.text((30, y), line, font=text_font, fill="#333333")
+            y += line_height
 
     draw_5g.text((30, 25), title_5g, font=title_font, fill=CMCC_DARK_BLUE)
-    draw_5g.line([(30, 65), (text_w - 30, 65)], fill="#CCCCCC", width=1)
-    y = 80
+    draw_5g.line([(30, 70), (text_w - 30, 70)], fill="#CCCCCC", width=1)
+    y = 85
     for line in text_5g.split("\n"):
-        draw_5g.text((30, y), line, font=text_font, fill="#333333")
-        y += 30
+        # 限制每行字符数，自动换行
+        max_chars = 22
+        if len(line) > max_chars:
+            import re
+
+            parts = re.split(r"([，。；])", line)
+            current_line = ""
+            for part in parts:
+                if len(current_line + part) <= max_chars:
+                    current_line += part
+                else:
+                    if current_line:
+                        draw_5g.text(
+                            (30, y), current_line, font=text_font, fill="#333333"
+                        )
+                        y += line_height
+                    current_line = part
+            if current_line:
+                draw_5g.text((30, y), current_line, font=text_font, fill="#333333")
+                y += line_height
+        else:
+            draw_5g.text((30, y), line, font=text_font, fill="#333333")
+            y += line_height
 
     total_w = chart_w + text_w
     total_h = chart_h * 2
