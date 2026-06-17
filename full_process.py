@@ -2,6 +2,7 @@
 """
 4G/5G指标自动通报 - 一句话调用，全程自动化执行
 固化逻辑不可修改
+v1.3新增：支持"子报表1"/"子报表2"命名的sheet，从对应关系表获取小区组信息
 """
 
 import pandas as pd
@@ -45,10 +46,54 @@ def clean_columns(df):
     return df
 
 
+def load_group_mapping(source_dir):
+    """
+    加载小区组和小区明细对应关系表
+    返回: dict {小区名称: 小区组}
+    """
+    mapping_file = os.path.join(source_dir, "小区组和小区明细对应关系表.xlsx")
+    if not os.path.exists(mapping_file):
+        print(f"  警告：未找到对应关系表 {mapping_file}")
+        return {}
+
+    try:
+        df = pd.read_excel(mapping_file)
+        df = clean_columns(df)
+        # 找到小区组和小区明细列
+        group_col = None
+        cell_col = None
+        for col in df.columns:
+            col_str = str(col)
+            if "小区组" in col_str and "明细" not in col_str:
+                group_col = col
+            elif "小区明细" in col_str or "明细" in col_str:
+                cell_col = col
+
+        if group_col and cell_col:
+            mapping = {}
+            for _, row in df.iterrows():
+                cell_name = row[cell_col]
+                group_name = row[group_col]
+                if pd.notna(cell_name) and pd.notna(group_name):
+                    mapping[str(cell_name).strip()] = str(group_name).strip()
+            print(f"  已加载 {len(mapping)} 条小区组映射关系")
+            return mapping
+        else:
+            print(f"  警告：对应关系表列名不匹配，列: {df.columns.tolist()}")
+            return {}
+    except Exception as e:
+        print(f"  警告：加载对应关系表失败: {e}")
+        return {}
+
+
 def process_network_type(source_dir, output_dir, network_type):
     print(f"\n{'=' * 60}")
     print(f"处理 {network_type} 数据")
     print("=" * 60)
+
+    # 加载小区组映射关系
+    print(f"\n步骤0: 加载小区组和小区明细对应关系")
+    group_mapping = load_group_mapping(source_dir)
 
     print(f"\n步骤1-2: 读取并清洗源数据")
 
@@ -56,14 +101,18 @@ def process_network_type(source_dir, output_dir, network_type):
     files = [
         f
         for f in os.listdir(source_dir)
-        if f.endswith(".xlsx") and not f.startswith("~$")
+        if f.endswith(".xlsx")
+        and not f.startswith("~$")
+        and "小区组和小区明细对应关系表" not in f
     ]
 
     all_data_by_group = {}
     summary_dfs = []
+    # 存储所有小区明细数据（不分组）
+    all_detail_dfs = []
     cell_groups = set()
     summary_first_cols = None  # 汇总表的列名
-    group_first_cols = {}  # 每个小区组的列名
+    detail_first_cols = None  # 小区明细的列名
 
     for f in files:
         xlsx = pd.ExcelFile(os.path.join(source_dir, f))
@@ -73,26 +122,32 @@ def process_network_type(source_dir, output_dir, network_type):
             df = df.dropna(axis=1, how="all")
             df = clean_columns(df)
 
-            if "汇总" in str(sheet_name):
+            # 识别汇总表：包含"汇总"或"子报表1"
+            if (
+                "汇总" in str(sheet_name)
+                or "子报表1" in str(sheet_name)
+                or "子报表 1" in str(sheet_name)
+            ):
                 if summary_first_cols is None:
                     summary_first_cols = list(df.columns[:9])
                 n_cols = len(summary_first_cols)
                 df_aligned = df.iloc[:, :n_cols]
                 df_aligned.columns = summary_first_cols
                 summary_dfs.append(df_aligned)
-                print(f"  文件 {f} - Sheet {sheet_name}: {len(df_aligned)} 行")
+                print(f"  文件 {f} - Sheet {sheet_name}: {len(df_aligned)} 行 (汇总表)")
+            # 识别小区明细表：不是汇总表的其他sheet（原来是小区组名，现在是"子报表2"或"子报表 2"）
             else:
-                cell_groups.add(sheet_name)
-                if sheet_name not in all_data_by_group:
-                    all_data_by_group[sheet_name] = []
-                if sheet_name not in group_first_cols:
-                    group_first_cols[sheet_name] = df.columns.tolist()
-                first_cols = group_first_cols[sheet_name]
+                # 存储所有小区明细到一个列表，稍后根据对应关系表分配小区组
+                if detail_first_cols is None:
+                    detail_first_cols = df.columns.tolist()
+                first_cols = detail_first_cols
                 min_cols = min(len(first_cols), len(df.columns))
                 df_aligned = df.iloc[:, :min_cols]
                 df_aligned.columns = first_cols[:min_cols]
-                all_data_by_group[sheet_name].append(df_aligned)
-                print(f"  文件 {f} - Sheet {sheet_name}: {len(df_aligned)} 行")
+                all_detail_dfs.append(df_aligned)
+                print(
+                    f"  文件 {f} - Sheet {sheet_name}: {len(df_aligned)} 行 (小区明细)"
+                )
 
     print(f"\n步骤3: 生成汇总表（多个SHEET）")
 
@@ -104,10 +159,71 @@ def process_network_type(source_dir, output_dir, network_type):
             summary_df.to_excel(writer, sheet_name="汇总表", index=False)
             print(f"  汇总表: {len(summary_df)} 行，直接合并（不求和）")
 
-        for group_name, group_dfs in all_data_by_group.items():
-            group_df = pd.concat(group_dfs, ignore_index=True)
-            group_df.to_excel(writer, sheet_name=group_name, index=False)
-            print(f"  Sheet {group_name}: {len(group_df)} 行")
+        # 合并所有小区明细数据，并根据对应关系表添加"小区组"列
+        if all_detail_dfs:
+            all_detail_df = pd.concat(all_detail_dfs, ignore_index=True)
+
+            # 找到小区名称列 - 优先使用"小区名称"列（必须放在NR小区标识等之前）
+            cell_name_col = find_column(all_detail_df, ["小区名称"])
+
+            # 根据对应关系表添加"小区组"列
+            if cell_name_col and group_mapping:
+                group_list = []
+
+                # 仅使用精确匹配
+                for cell_name in all_detail_df[cell_name_col]:
+                    cell_str = str(cell_name).strip() if pd.notna(cell_name) else ""
+                    # 精确匹配
+                    group = group_mapping.get(cell_str, "")
+                    group_list.append(group)
+
+                all_detail_df["小区组"] = group_list
+                matched_count = sum(1 for g in group_list if g)
+                print(f"  已为 {matched_count} 条记录匹配到小区组")
+            else:
+                all_detail_df["小区组"] = ""
+                if not cell_name_col:
+                    print(f"  警告：未找到小区名称列")
+                if not group_mapping:
+                    print(f"  警告：group_mapping为空")
+
+            # 找出所有小区组
+            if "小区组" in all_detail_df.columns:
+                valid_groups = [
+                    g
+                    for g in all_detail_df["小区组"].unique()
+                    if pd.notna(g) and str(g).strip()
+                ]
+                cell_groups = set(valid_groups)
+                print(f"  发现 {len(cell_groups)} 个小区组: {list(cell_groups)[:5]}...")
+
+                # 按小区组分别存储到不同的sheet
+                for group_name in cell_groups:
+                    group_df = all_detail_df[
+                        all_detail_df["小区组"] == group_name
+                    ].copy()
+                    # 保留"小区组"列作为第2列（在时间之后）
+                    cols = group_df.columns.tolist()
+                    if "小区组" in cols:
+                        # 确保"小区组"在第2列（索引1）
+                        cols.remove("小区组")
+                        # 找到时间列的位置，将小区组插入到时间之后
+                        time_idx = None
+                        for i, col in enumerate(cols):
+                            if "时间" in str(col):
+                                time_idx = i
+                                break
+                        if time_idx is not None:
+                            cols.insert(time_idx + 1, "小区组")
+                        else:
+                            cols.insert(1, "小区组")
+                        group_df = group_df[cols]
+                    group_df.to_excel(writer, sheet_name=group_name, index=False)
+                    print(f"  Sheet {group_name}: {len(group_df)} 行")
+            else:
+                # 如果没有小区组列，存入一个统一的sheet
+                all_detail_df.to_excel(writer, sheet_name="各小区组明细", index=False)
+                print(f"  各小区组明细: {len(all_detail_df)} 行")
 
     total_file = os.path.join(output_dir, f"{network_type}总表_{current_time}.xlsx")
     print(f"\n{network_type}总表已生成: {total_file}")
@@ -143,9 +259,7 @@ def process_network_type(source_dir, output_dir, network_type):
         ],
     )
 
-    # 从各小区组Sheet读取指标计算所需的字段
-    # 指标字段在各小区组Sheet中，不在汇总表
-    # 准备读取各小区组Sheet
+    # 准备读取各小区组Sheet用于指标计算
     xlsx_total = pd.ExcelFile(total_file)
     cell_group_sheets = {}
     for sheet_name in xlsx_total.sheet_names:
